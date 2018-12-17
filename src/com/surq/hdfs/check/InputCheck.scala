@@ -11,15 +11,18 @@ import org.apache.commons.mail.DefaultAuthenticator
 object InputCheck extends App {
   import scala.actors.Actor._
   // 所有参数命令
-  val Array(delete, count, write, waits, toEmail) = Array("delete", "count", "write", "waits", "toEmail")
+  val Array(delete, count, write, wait_exist, toEmail, wait_count) = Array("delete", "count", "write", "wait_exist", "toEmail", "wait_count")
   if (args.size > 0) {
     val properties = LoadFilePath.loadProperties("system.properties")
+    // 线程堵塞休眠时间
+    val waitTime = 30
     val sortIndexList = Array(
       (toEmail, 0),
       (delete, properties.getProperty("action.delete.sort.index", "100").toInt),
       (count, properties.getProperty("action.count.sort.index", "100").toInt),
       (write, properties.getProperty("action.write.sort.index", "100").toInt),
-      (waits, properties.getProperty("action.wait.sort.index", "100").toInt))
+      (wait_exist, properties.getProperty("action.wait_exist.sort.index", "100").toInt),
+      (wait_count, properties.getProperty("action.wait_count.sort.index", "100").toInt))
     // 升序
     val paramList = sortIndexList.sortBy(_._2).map(_._1)
     // 参数解析
@@ -36,13 +39,13 @@ object InputCheck extends App {
     val flg_list = paramList.map(para => {
       val value = actionType.getOrElse(para, Array[String]())
       para match {
-        case "toEmail" => { hdfsFileCheckUtil = new HdfsFileCheckUtil(value); true }
-        case "delete"  => hdfsFileCheckUtil.deletHdfsFiles(value)
-        // 检查文件或文件夹直到所有文件存在返回，否则30秒一检查。
-        case "waits"   => { hdfsFileCheckUtil.waitFilesExist(value, 10); true }
-        case "count"   => hdfsFileCheckUtil.isFilesCount(value.map(line => { val countN = line.split("#"); (countN(0).trim, countN(1).trim.toInt) }))
-        case "write"   => hdfsFileCheckUtil.writeToHdfsFiles(value.map(line => { val text = line.split("#"); (text(0).trim, text(1).trim) }))
-        case _         => { Console println para + "为无效参数"; false }
+        case "toEmail"    => { hdfsFileCheckUtil = new HdfsFileCheckUtil(value); true }
+        case "wait_exist" => { hdfsFileCheckUtil.waitFilesExist(value, waitTime); true }
+        case "wait_count" => { hdfsFileCheckUtil.waitFilesCount(value.map(line => { val countN = line.split("#"); (countN(0).trim, countN(1).trim.toInt) }), waitTime); true }
+        case "count"      => hdfsFileCheckUtil.isFilesCount(value.map(line => { val countN = line.split("#"); (countN(0).trim, countN(1).trim.toInt) }))
+        case "delete"     => hdfsFileCheckUtil.isDeletHdfsFiles(value)
+        case "write"      => hdfsFileCheckUtil.writeToHdfsFiles(value.map(line => { val text = line.split("#"); (text(0).trim, text(1).trim) }))
+        case _            => { Console println para + "为无效参数"; false }
       }
     })
     // 发邮件
@@ -52,11 +55,12 @@ object InputCheck extends App {
     //所有参数返回值
     val allParamMap = paramList.zip(flg_list).toMap
     //实际需参数返回值列表 打印到控制台
-    actionType.map(_._1).filter(key => returnParamList.contains(key)).toList.map(p =>  p + ":" + allParamMap(p)) foreach println
+    actionType.map(_._1).filter(key => returnParamList.contains(key)).toList.map(p => p + ":" + allParamMap(p)) foreach println
   } else {
     Console println "参数格式："
     Console println s"--$delete /sources/file1,/sources/file2,......欲删除路径之间用逗号隔开"
-    Console println s"--$waits /sources/file1,/sources/file2,......欲等待文件路径之间用逗号隔开,所检查文件不到位时每30秒查一次"
+    Console println s"--$wait_exist /sources/file1,/sources/file2,......线程堵塞，欲等待文件路径之间用逗号隔开,所检查文件不到位时每30秒查一次"
+    Console println s"--$wait_count /sources/file1,/sources/file2,......线程堵塞，判断文件夹下文件个数，N为期望的个数"
     Console println s"--$count /sources/file1 N,/sources/file2 N,......判断文件夹下文件个数，N为期望的个数"
     Console println s"--$write /sources/file1 text,/sources/file2 text,......向HDFS文件中写入内容。"
     Console println s"--$toEmail surongquan@moxiu.net,......报警邮件接收人地址，用逗号隔开，不配置将不发送邮件"

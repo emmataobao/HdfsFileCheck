@@ -28,78 +28,80 @@ class HdfsFileCheckUtil(toAddressList: Array[String]) {
 
   val dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 
-  /**
-   * 发送HDFS文件监控 异常内容
-   */
-  def sendEmail = if (mesgList.size > 0) sendListMsg
+  //  def sendEmail =sendListMsg
   /**
    * 判断文件夹下文件个数是否= count
    */
-  def isFileCount(path: String, count: Int) = {
-    val fileSize = HDFSFileSytem.listStatus(new Path(path)).size
-    if (fileSize == count) true else {
-      mesgList += (dateFormat.format(System.currentTimeMillis) + ":文件个数判断" -> (path + "下有" + fileSize + "个，不等于预期的" + count + "个。"))
-    }
-  }
+  def isFileCount(path: String, count: Int) = isFilesCount(Array((path, count)))
+
+  /**
+   * 直到指定的文件存在为止
+   */
+  def waitFileExist(path: String, waitTime: Int = 1) = waitFilesExist(Array(path), waitTime)
+
+  /**
+   * 删除HDFS文件
+   */
+  def isDeletHdfsFile(deletpath: String) = isDeletHdfsFiles(Array(deletpath))
+
+  /**
+   * 向HDFS文件写入content
+   */
+  def writeToHdfsFile(file: String, content: String) = writeToHdfsFiles(Array((file, content)))
+
+  /**
+   * 判断文件夹下文件个数是否= count
+   */
   def isFilesCount(pathList: Array[(String, Int)]) = {
     val resultList = pathList.map(path => (HDFSFileSytem.listStatus(new Path(path._1)).size, path._2, path._1)).filter(kv => kv._1 != kv._2)
     if (resultList.size > 0) {
-      resultList.map(line => mesgList += (dateFormat.format(System.currentTimeMillis) + ":文件个数判断" -> (line._3 + "下有" + line._1 + "个，不等于预期的" + line._2 + "个。")))
+      resultList.map(line => mesgList += (dateFormat.format(System.currentTimeMillis) + ":【文件个数判断】" -> (line._3 + "下有" + line._1 + "个，不等于预期的" + line._2 + "个。")))
       false
     } else true
   }
 
   /**
-   * 直到指定的文件存在为止
+   * 线程堵塞，直到文件个数等于期望值
    */
-  def waitFileExist(path: String, waitTime: Int = 1) = {
-    val hdfsPath = new Path(path)
+  def waitFilesCount(pathList: Array[(String, Int)], waitTime: Int = 1) = {
+    var resultList = pathList.map(path => (HDFSFileSytem.listStatus(new Path(path._1)).size, path._2, path._1)).filter(kv => kv._1 != kv._2)
     var flg = true
-    while (!isFileExist(hdfsPath)) {
+    val buffList = ArrayBuffer[String]()
+    while (resultList.size > 0) {
       if (flg) {
-        mesgList += (dateFormat.format(System.currentTimeMillis) + ":判断文件是否存在" -> (hdfsPath.toString + "不存在，开始等待。。。"))
-        sendListMsg
+        resultList.map(f => buffList += f._3)
+        // 有文件夹下没有完成的
+        resultList.map(line => mesgList += (dateFormat.format(System.currentTimeMillis) + ":【文件个数判断直到齐备】" -> (line._3 + "下有" + line._1 + "个文件，不等于预期的" + line._2 + "个文件。")))
+        sendEmail
         flg = false
       }
       Thread.sleep(waitTime * 1000)
+      resultList = resultList.map(path => (HDFSFileSytem.listStatus(new Path(path._3)).size, path._2, path._3)).filter(kv => kv._1 != kv._2)
     }
-    if (!flg) {
-      mesgList += (dateFormat.format(System.currentTimeMillis) + ":判断文件是否存在" -> (hdfsPath.toString + "已就绪。"))
-      sendListMsg
-    }
+    if (!flg) mesgList += (dateFormat.format(System.currentTimeMillis) + ":【文件个数判断直到齐备】" -> (buffList.mkString(",") + "文件已齐备就绪与预期个数一致。"))
   }
 
   /**
    * 直到指定的文件存在为止
    */
   def waitFilesExist(pathList: Array[String], waitTime: Int = 1) = {
-    var hdfsPathList = pathList.map(f => new Path(f))
+    var hdfsPathList = pathList.map(f => new Path(f)).filter(path => !isFileExist(path))
+    val buffList = ArrayBuffer[String]()
     var flag = true
     while (hdfsPathList.size > 0) {
       // 留下不存在的文件
-      hdfsPathList = hdfsPathList.filter(path => !isFileExist(path))
-      if (hdfsPathList.size > 0 && flag) {
-        hdfsPathList.map(path => mesgList += (dateFormat.format(System.currentTimeMillis) + ":判断文件是否存在" -> (path.toString + "不存在，开始等待。。。")))
-        sendListMsg
+      if (flag) {
+        hdfsPathList.map(f => buffList += f.toString)
+        buffList.map(path => mesgList += (dateFormat.format(System.currentTimeMillis) + ":【直到文件存在】" -> (path + "目前不存在，开始等待......")))
+        sendEmail
         flag = false
       }
       Thread.sleep(waitTime * 1000)
+      hdfsPathList = hdfsPathList.filter(path => !isFileExist(path))
     }
-    if (!flag) {
-      mesgList += (dateFormat.format(System.currentTimeMillis) + ":判断文件是否存在" -> (pathList.mkString(",") + "已全部就绪。"))
-      sendListMsg
-    }
+    if (!flag) mesgList += (dateFormat.format(System.currentTimeMillis) + ":【直到文件存在】" -> (buffList.mkString(",") + "已全部就绪。"))
   }
 
-  /**
-   * 发送邮件
-   */
-  def sendListMsg = {
-    if (toAddressList.size > 0) {
-      MailUtil.sendHtmlMail(toAddressList, "HDFS文件监控", mesgList.mkString("\t"))
-      mesgList.clear
-    }
-  }
   /**
    * 文件夹是否包涵指定的文件
    */
@@ -111,47 +113,20 @@ class HdfsFileCheckUtil(toAddressList: Array[String]) {
       path.substring(path.lastIndexOf(System.getProperty("file.separator")) + 1)
     })
     val flg = list.contains(fileName)
-    if (!flg) mesgList += (dateFormat.format(System.currentTimeMillis) + ":文件是否包涵判断" -> (path + "文件夹中不存在" + fileName + "文件。"))
+    if (!flg) mesgList += (dateFormat.format(System.currentTimeMillis) + ":【文件是否包涵判断】" -> (path + "文件夹中不存在" + fileName + "文件。"))
     flg
-  }
-  /**
-   * 删除HDFS文件
-   */
-  def isDeletHdfsFile(deletpath: String) = {
-    val path = new Path(deletpath)
-    if (isFileExist(path)) {
-      val flg = HDFSFileSytem.delete(path, true)
-      if (!flg) mesgList += (dateFormat.format(System.currentTimeMillis) + ":删除HDFS文件" -> (deletpath + " 删除失败。"))
-      flg
-    } else true
   }
 
   /**
    * 删除HDFS文件
    */
-  def deletHdfsFiles(pathList: Array[String]) = {
+  def isDeletHdfsFiles(pathList: Array[String]) = {
     val hdfsPathList = pathList.map(f => new Path(f))
     val shibaiList = hdfsPathList.map(deletpath => (HDFSFileSytem.delete(deletpath, true), deletpath)).filter(!_._1).map(_._2.toString)
     if (shibaiList.size > 0) {
-      mesgList += (dateFormat.format(System.currentTimeMillis) + ":删除HDFS文件" -> (shibaiList.mkString(",") + " 删除失败。"))
+      mesgList += (dateFormat.format(System.currentTimeMillis) + ":【删除HDFS文件】" -> (shibaiList.mkString(",") + " 删除失败。"))
       false
     } else true
-  }
-
-  /**
-   * 向HDFS文件写入content
-   */
-  def writeToHdfsFile(file: String, content: String) = {
-    try {
-      val out = HDFSFileSytem.create(new Path(file))
-      out.write(content.getBytes("UTF-8"))
-      out.close
-    } catch {
-      case e: Exception => {
-        mesgList += (dateFormat.format(System.currentTimeMillis) + ":向HDFS写文件" -> (file + " 写入失败。"))
-        e.printStackTrace()
-      }
-    }
   }
 
   /**
@@ -167,7 +142,7 @@ class HdfsFileCheckUtil(toAddressList: Array[String]) {
       } catch {
         case e: Exception =>
           {
-            mesgList += (dateFormat.format(System.currentTimeMillis) + ":向HDFS写文件" -> (info._1 + " 写入失败。"))
+            mesgList += (dateFormat.format(System.currentTimeMillis) + ":【向HDFS写文件】" -> (info._1 + " 写入失败。"))
             e.printStackTrace()
           }
           false
@@ -185,4 +160,13 @@ class HdfsFileCheckUtil(toAddressList: Array[String]) {
    * 文件是否存在
    */
   def isFileExist(path: Path) = HDFSFileSytem.exists(path)
+
+  /**
+   * 发送邮件
+   */
+  def sendEmail = if (toAddressList.size > 0 && mesgList.size > 0) {
+    val msg = mesgList.map(line => line._1 + ":\t" + line._2).mkString("<p>", "</p><p>", "</p>")
+    MailUtil.sendHtmlMail(toAddressList, "HDFS文件监控报警", msg)
+    mesgList.clear
+  }
 }
