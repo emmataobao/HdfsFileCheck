@@ -9,7 +9,6 @@ import org.apache.commons.mail.DefaultAuthenticator
  * count=/sources/file1@N,/sources/file2@N
  */
 object InputCheck extends App {
-  import scala.actors.Actor._
   // 所有参数命令
   val Array(delete, count, write, wait_exist, toEmail, wait_count) = Array("delete", "count", "write", "wait_exist", "toEmail", "wait_count")
   if (args.size > 0) {
